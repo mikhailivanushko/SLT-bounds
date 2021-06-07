@@ -190,10 +190,7 @@ def dual(X, y, kernel=linear_kernel, C=1, figsize=[15,15],
 	if (save_path != None):
 		now = datetime.now()
 		date_time = now.strftime("%m%d%Y%H%M%S")
-		plt.savefig(save_path + "dual_" + date_time + "_" + str(C) + "_" + str(kernel.__name__) + ".png")
+		plt.savefig(save_path + "dual_" + date_time + "_" + str(C) + "_" + str(kernel.__name__) + ".png", bbox_inches="tight")
 
 	plt.show()
-
-
-
 

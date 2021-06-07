@@ -27,9 +27,18 @@ from datetime import datetime
 
 pd.set_option('chained_assignment',None) # Supress annoying pandas warning
 
-
+'''
+    The "outlier" function $\Phi(S)$
+ 
+    input:
+        params = [intercept, w_1, w_2, ... w_n] - the intercept and weight vector
+        args_list = [X, Y, Masked_X, Masked_Y, Full set size, Masked set size, margin size]
+   
+    output:
+        Negated difference of average margin loss between the main set and the marked set.
+'''
 def _outlier(params, args_list):
-    # TODO doc
+
     mloss1 = _margin_loss(
         params[1:],     # w
         params[0],      # intercept
@@ -49,7 +58,19 @@ def _outlier(params, args_list):
 
     return - ( (np.sum(mloss1) / N) - (np.sum(mloss2) / M) )
 
+'''
+    Solver function that finds the w, intercept with optimal "outlier" function $\Phi(S)$
 
+    input:
+        X, Y, masked_X, masked_Y - sets and the masked subsets
+        margin_size - the margin size
+        bound - the upper-bound on intercept
+        kwargs = {'maxiter', 'initial_temp', 'accept'} - a dict of arguments fot the Dual Annealing minimizer
+
+    output:
+        Optimal value of $\Phi(S)$ for the sets X, Y, the masked versions, the margin size, and the upper-bound on intercept.
+
+'''
 def solve_outlier(X, Y, masked_X, masked_Y, margin_size, bound, kwargs):
 
     st_bounds = [(-bound,bound)] + [(-1, 1) for x in range(X.shape[1]) ]
@@ -60,14 +81,21 @@ def solve_outlier(X, Y, masked_X, masked_Y, margin_size, bound, kwargs):
         maxiter=kwargs['maxiter'],
         initial_temp=kwargs['initial_temp'],
         accept=kwargs['accept']
-    )
+    ) # This is a minimizer, but the _outlier function result is negated.
 
     return result
 
-def _margin_loss_correlation(params, args_list):
-    # input: params as [intercept, w_1, w_2, ... , w_n]; args list as [X, Y, rad_vector, margin_size]
-    # output: correlation of margin loss function with the rademacher vector (times the number of samples)
+'''
+    Correlation of margin loss with a rademacher vector
 
+    input:
+        params = [intercept, w_1, w_2, ... w_n] - the intercept and weight vector
+        args_list = [X, Y, rad_vector, margin_size]
+
+    output:
+        Correlation of margin loss function with the rademacher vector (times the number of samples).
+'''
+def _margin_loss_correlation(params, args_list):
     radvec = args_list[2]
 
     margin_loss = _margin_loss(
@@ -79,8 +107,19 @@ def _margin_loss_correlation(params, args_list):
 
     return -np.sum(margin_loss * radvec) # negate correlation to create minimization problem
 
+'''
+    Empirical Margin Loss
+
+    input:
+        w - a vector [w_1, ..., w_n]
+        intercept - the intercept b
+        margin_size - the margin size
+        X, Y - the set and its labels
+
+    output:
+        Empirical Margin Loss on set X with labels Y, defined by w, intercept, and margin size.
+'''
 def _margin_loss(w, intercept, margin_size, X, Y):
-    # TODO doc
     if (margin_size == 0):
         margin_loss = 0.5 - ( Y*( np.sign( np.dot(X,w)+intercept ) ) ) / 2
     else:
@@ -88,14 +127,27 @@ def _margin_loss(w, intercept, margin_size, X, Y):
         margin_loss = 1 - ( signed_distance / ( margin_size * np.linalg.norm(w) ) )
         margin_loss[margin_loss<0] = 0
         margin_loss[margin_loss>1] = 1
-
+    #print(1 - ( signed_distance / ( margin_size * np.linalg.norm(w) ) ))
     return margin_loss
 
+'''
+    Linear Confidence
 
+    input:
+        w - a vector [w_1, ..., w_n]
+        intercept - the intercept b
+        X - the dataset
+
+    output:
+        Linear confidence (signed distance to the plane defined by w, + the intercept). w is normalized.
+'''
 def _confidence(w, intercept, X):
     return (np.dot(X,w)+intercept) / np.linalg.norm(w)
 
 '''
+
+UNUSED
+
 def _confidence_correlation(params, args_list):
     # input: params as [intercept, w_1, w_2, ... , w_n]; args list as [X, rad_vector]
     # output: correlation of confidence with the rademacher vector (times the number of samples)
@@ -110,13 +162,32 @@ def _confidence_correlation(params, args_list):
     return -np.sum(margin_loss * radvec) # negate correlation to create minimization problem
 '''
 
-def _stochastic_solve(function, X, Y, radvec, margin, bounds, kwargs, verbose=False, method='de'):
-    # use Stochastic method, TODO speed it up
+'''
+    Helper function for plack-box optimization of correlation of Empirical margin loss with
+    a Rademacher vector
+
+    input:
+        function - the function to optimize, usually _margin_loss_correlation
+        X, Y - the dataset and its labels
+        radvec - the Rademacher vector
+        margin - the margin size
+        bound - the upper-bound on absolute value of intercept
+        
+        method - Type of optimizer to use. "de" for Differential Evolution, "da" for Dual Annealing.
+        kwargs - dict of arguments for the optimizer
+        
+        verbose - enable verbose display (only for Differential Evolution)
+
+    output:
+        Solution [intercept, w_1, ..., w_n, margin_sise] that optimizes the correlation.
+        margin_size is fixed during the optimization, and just appended to the result for convinience in other functions.
+'''
+def _stochastic_solve(function, X, Y, radvec, margin, bound, kwargs, verbose=False, method='de'):
     if (method == "de"):
-        st_bounds = [(-bounds,bounds)] + [(-1, 1) for x in range(X.shape[1]) ]
+        st_bounds = [(-bound,bound)] + [(-1, 1) for x in range(X.shape[1]) ]
         result = differential_evolution(
             func=function,
-            bounds=st_bounds,
+            bound=st_bounds,
             args=([X,Y,radvec,margin],),
             popsize=kwargs['popsize'],
             disp=verbose
@@ -124,7 +195,7 @@ def _stochastic_solve(function, X, Y, radvec, margin, bounds, kwargs, verbose=Fa
         result.x = np.append(result.x, margin)
         return result.x
     elif (method == "da"):
-        st_bounds = [(-bounds,bounds)] + [(-1, 1) for x in range(X.shape[1]) ]
+        st_bounds = [(-bound,bound)] + [(-1, 1) for x in range(X.shape[1]) ]
         result = dual_annealing(
             func=function,
             bounds=st_bounds,
@@ -140,39 +211,44 @@ def _stochastic_solve(function, X, Y, radvec, margin, bounds, kwargs, verbose=Fa
         assert(False)
         return
 
+'''
+    Plot function for prediction of a model
+    
+    X, Y - the dataset and its original labels
+    radvec - rademacher vector (required for "margin_loss" and "confidence")
+
+    model_type - type of model provided. Can be "svc", "dummy", "margin_loss" or "confidence"
+    model - the model parameters. For "svc" its the SVC object, for "dummy" its a DummyRegressor object, for "margin_loss" looks like [intercept, w_1, ..., w_n, margin_size], for "confidence" looks like [intercept, w_1, ..., w_n].
+
+    title - plot title
+    figsize - plot size
+    p - proportion of dataset points to plot. use a smaller p if your dataset is large so that your notebook
+    doesn't lock up.
+    fix_limits - use custom axis limits?
+    x_lim, y_lim - custom axis limits
+    lim_padding - auto axis limit padding
+    dotsize - dot size on plot
+    dot_show_radvec - Whether the value of the dots on the graph show the rademacher vector.
+    draw_line - Whether to draw the line and the margin
+    color_bar - plot the color bar?
+    
+    save_image - whether to save an image of the plot to /images
+    verbose - toggle verbose output
+'''
 def plot_predicts(
     model, X, Y, radvec=None,
-    model_type="custom",
-
-    verbose=False,
-    p=1, fix_limits=False, lim_padding=0.5, x_lim=[-1.0, 1.0], y_lim=[-1.0, 1.0],    # Plotting
-    dotsize=100, title='', color_bar=False, figsize=[10,10], save_image=False): #
+    model_type="svc", p=1, fix_limits=False, lim_padding=0.5, x_lim=[-1.0, 1.0], y_lim=[-1.0, 1.0],
+    dotsize=100, dot_show_radvec=True, draw_line=True, title='', color_bar=False, figsize=[10,10], save_image=False, verbose=False): 
     
-    ''' TODO
-    Plot function
-    model: the model
-    features: X
-    targets: y
-    fix_limits: use custom axis limits?
-    lim_padding: auto axis limit padding
-    x_lim, y_lim: custom axis limits
-    dotsize: dot size on plot
-    title: plot title
-    figsize: plot size
-    verbose: toggle verbose output
+    # mask out the features if p < 1
+    if (p < 1):
+        mask = np.random.choice([True, False], size=X.shape[0], p=[p, 1.0 - p])
+        Y = Y[mask]
+        X = X[mask]
+        if radvec is not None: radvec = radvec[mask]
 
-    model_type: type of model provided. Can be "svc", "dummy" or "custom"
-
-    save_image: whether to save the plot as an image
-    '''
-
-    mask = np.random.choice([True, False], size=X.shape[0], 
-                            p=[p, 1.0 - p])
-
-    Y = Y[mask]
-    X = X[mask]
-    if radvec is not None: radvec = radvec[mask]
-
+    # the plotting function only plots the 0th and 1st feature in the dataset.
+    # TODO / add parameter to control which features to plot
     features_0 = X[:, 0]
     features_1 = X[:, 1]
     
@@ -184,7 +260,7 @@ def plot_predicts(
     # plot the hyperplane and margin (if not supplied a dummy model)
     if (model_type != "dummy"):
 
-        # get the separating hyperplane from model
+        # get the separating hyperplane from the model
         if (model_type == "svc"):
             w = model.coef_[0]
             b = model.intercept_[0]
@@ -206,108 +282,89 @@ def plot_predicts(
             yy_dashed.append( yy - np.sqrt(1 + a ** 2) * margin )
             
         elif(model_type=="margin_loss" or model_type=="confidence"):
-            b = model[0]
-
+            
+            
             w_raw = model[1:] if (model_type=="confidence") else model[1:-1]
-            margin = 1.0 if (model_type=="confidence") else model[-1]
-
-            w = (w_raw/np.linalg.norm(w_raw))
-
+            b_raw = model[0]
+            
+            w = w_raw # (w_raw/np.linalg.norm(w_raw))
+            b = b_raw
+            
+            
+            a = -w[0] / w[1]
             xx = np.linspace(x_lim[0], x_lim[1])
-            if (margin >= 0):
-                # main plane
-                yy = (xx - b * w[0]) * (-w[0]/w[1]) + b * w[1]
 
-                # dashed lines that are 'margin'-away from the main plane
-                yy_dashed = []
-                yy_dashed.append( (xx - (b + margin) * w[0]) * (-w[0]/w[1]) + (b + margin) * w[1] )
-                yy_dashed.append( (xx - (b - margin) * w[0]) * (-w[0]/w[1]) + (b - margin) * w[1] )
-            else:
-                yy_dotted = []
-                for l in range(-3,4):
-                    yy_dotted.append( (xx - (b + margin * l * 0.2) * w[0]) * (-w[0]/w[1]) + (b + margin * l * 0.2) * w[1] )
-        elif(model_type=="fixed_svm"):
-            b = model[0]
+            # main plane
+            yy = a * xx - (b) / w[1]
 
-            w_raw = model[1:-1]
             margin = model[-1]
 
-            w = (w_raw/np.linalg.norm(w_raw))
-
-            xx = np.linspace(x_lim[0], x_lim[1])
-            if (margin >= 0):
-                # main plane
-                yy = (xx - b * w[0]) * (-w[0]/w[1]) + b * w[1]
-
-                # dashed lines that are 'margin'-away from the main plane
-                yy_dashed = []
-                yy_dashed.append( (xx - (b + margin) * w[0]) * (-w[0]/w[1]) + (b + margin) * w[1] )
-                yy_dashed.append( (xx - (b - margin) * w[0]) * (-w[0]/w[1]) + (b - margin) * w[1] )
-            else:
-                yy_dotted = []
-                for l in range(-3,4):
-                    yy_dotted.append( (xx - (b + margin * l * 0.2) * w[0]) * (-w[0]/w[1]) + (b + margin * l * 0.2) * w[1] )
-    
+            # dashed lines that are 'margin'-away from the main plane
+            yy_dashed = []
+            yy_dashed.append( yy + np.sqrt(1 + a ** 2) * margin )
+            yy_dashed.append( yy - np.sqrt(1 + a ** 2) * margin )
+            
 
     # calculated margin lines, w, b (intercept)
 
+    # "values" variable is the value of the dots on the plot
     if (model_type=="svc"):
         values = (Y[:] == 1).astype(np.float)
     elif(model_type=="margin_loss"):
-        #values = (radvec[:] == 1).astype(np.float)
-        values = _margin_loss(w_raw, b, margin, X, Y) * radvec
-        print(np.min(_margin_loss(w_raw, b, margin, X, Y)))
+        values = ((radvec[:] == 1).astype(np.float)) if dot_show_radvec else (_margin_loss(w_raw, b_raw, margin, X, Y) * radvec)
     elif(model_type=="confidence"):
-        values = (Y[:] == 1).astype(np.float)
-    elif(model_type=="fixed_svm"):
-        values = (Y[:] == 1).astype(np.float)
+        values = ((radvec[:] == 1).astype(np.float)) if dot_show_radvec else (Y[:] == 1).astype(np.float)
 
     plt.figure(figsize=figsize)
     
+    
+    
+    # Setup and predict values for the background
     XX, YY = np.mgrid[x_lim[0]:x_lim[1]:500j, y_lim[0]:y_lim[1]:500j]
     ravel = np.c_[XX.ravel(), YY.ravel()]
     if (model_type=="svc"):
         Z = model.predict(ravel)
     elif (model_type=="margin_loss"):
-        # Z = np.array(_margin_loss( w[:2], b, margin, ravel, np.ones(ravel.shape[0])) ) #Y))
         if (verbose):
-            correlations = _margin_loss(w_raw, b, margin, X, Y) * radvec
+            correlations = _margin_loss(w_raw, b_raw, margin, X, Y) * radvec
             print('correlation with the rademacher vector:', np.sum(correlations), np.sum(correlations) / len(correlations))
     elif (model_type=="confidence"):
         Z = np.array( _confidence( w[:2], b, ravel) )
         if (verbose):
-            correlations = _confidence( w_raw, b, X ) * radvec
+            correlations = _confidence( w, b, X ) * radvec
             print('correlation with the radvec:', np.sum(correlations), np.sum(correlations) / len(correlations))
-    elif (model_type=="fixed_svm"):
-        Z = np.sign(ravel.dot(w[:2]) - b)
 
+    # color maps
     cmbg = LinearSegmentedColormap.from_list(
         'color_map_bg', [(16/255, 90/255, 173/255), (193/255, 110/255, 49/255)], N=100)
     cmdot = LinearSegmentedColormap.from_list(
         'color_map_dot', [(11/255, 165/255, 254/255), (255/255, 150/255, 0/255)], N=100)
     
     # Put the result into a color plot
-    if (model_type=="svc" or model_type=="confidence" or model_type=="fixed_svm"):
+    if (model_type=="svc" or model_type=="confidence"):
         Z = Z.reshape(XX.shape)
         plt.pcolormesh(XX, YY, Z, antialiased=True, cmap=cmbg)
         if (color_bar):
             plt.colorbar()
     
-    # Draw the plane and margin (if not supplied a dummy model)
-    plt.plot(xx, yy, 'k-',c='black')
-    plt.plot(xx, yy_dashed[0], 'k--',c='black')
-    plt.plot(xx, yy_dashed[1], 'k--',c='black')
-        
+    line_color = 'black' if (model_type=="margin_loss") else 'white'
     
+    # Draw the plane and margin (if not supplied a dummy model)
+    if (draw_line):
+        plt.plot(xx, yy, 'k-',c=line_color)
+        plt.plot(xx, yy_dashed[0], 'k--',c=line_color)
+        plt.plot(xx, yy_dashed[1], 'k--',c=line_color)
+
 
     # Highlight Support vectors for svc model
-    #if (model_type == "svc"):
-    #    plt.scatter(model.support_vectors_[:, 0], model.support_vectors_[:, 1], s=dotsize,
-    #                facecolors='none', edgecolors='white', linewidths=2,cmap=cmdot)
+    if (model_type == "svc"):
+        plt.scatter(model.support_vectors_[:, 0], model.support_vectors_[:, 1], s=dotsize,
+                    facecolors='none', edgecolors='white', linewidths=2,cmap=cmdot)
     
     # Draw the rest of the features
     plt.scatter(features_0, features_1, c=values, zorder=10,
                edgecolors='white',s=dotsize, linewidths=1.5, cmap=cmdot)
+    
     
     plt.xlim(x_lim)
     plt.ylim(y_lim)
@@ -317,46 +374,43 @@ def plot_predicts(
     plt.grid()
     
 
-    if not os.path.exists("images"):
-        os.mkdir("images")
-
+    # save image
     if (save_image):
+        if not os.path.exists("images"):
+            os.mkdir("images")
         now = datetime.now()
         date_time = now.strftime("%m%d%Y%H%M%S")
-        plt.savefig("images/" + str(model_type) + "_" + str(margin) + "_" + date_time + ".png")
+        plt.savefig("images/" + str(model_type) + "_" + str(margin) + "_" + date_time + ".png", bbox_inches="tight")
 
     plt.show()
 
+'''
+    Process the dataset with a certain model and plot the result
+
+    X, Y - dataset and its labels
+    model_type - type of model ("svc", "margin_loss", "confidence")
+    radvec - Rademacher vector (required for "margin_loss" and "correlation")
+    
+    margin, bound - margin size and bound on intercept
+    
+    method - optimization method
+    kwargs - arguments for the optimization method
+
+    parameters passed to plot function:
+    lim_padding, dotsize, figsize, color_bar, dot_show_radvec, draw_line
+    
+    verbose - toggle verbose output
+
+    save_image - whether to save the plots as images
+'''
 def process_dataset(
     X, Y,
     model_type="svc",
     method="de", kwargs=None, radvec=None, # used if model_type = 'margin_loss'
-    margin=1.0, bounds=1e-10,
-    figsize=[7,7], lim_padding=1, dotsize=200, color_bar=False, # plot options
-    verbose=False, save_image=False):
+    margin=1.0, bound=1e-10,
+    figsize=[7,7], lim_padding=1, dotsize=200, dot_show_radvec=True, draw_line=True, color_bar=False, save_image=False,
+    verbose=False):
     
-    '''
-    TODO FIX
-    Process the dataset with a certain model and plot the result
-
-    Input passed to "prep_data":
-    data: data to be processed
-    class_col: name of class column
-    classes: a pair of lists, containing the values of class_col belonging to classes A and B
-
-    Input passed to plot function:
-    lim_padding: auto axis limit padding
-    dotsize: dot size on plot
-    figsize: plot size
-    verbose: toggle verbose output
-
-    model_type: model type to use. Can be "svc" or "custom"
-    
-    margins: a list of margins to try. Used by SVC as the value of C; Used by the custom optimizer as the actual margin size
-    (if supplied a negative margin, then no margin is used at all (no clamping on confidence)).
-
-    save_image: whether to save the plots as images
-    '''
     data_size = X.shape[0]
 
     if (model_type == "svc"):
@@ -372,7 +426,7 @@ def process_dataset(
                 Y=Y,
                 radvec=radvec,
                 margin=margin,
-                bounds=bounds,
+                bound=bound,
                 method=method,
                 kwargs=kwargs,
                 verbose=verbose
@@ -387,8 +441,8 @@ def process_dataset(
         if (np.linalg.norm(solution) == 0):
             model = [0] + [0 for x in range(X.shape[1])]
         else:
-            check = np.sign(np.sum(radvec*Y))
-            model = np.array([bounds * check] + list(solution))
+            check = np.sign(np.sum(radvec))
+            model = np.array([bound * check] + list(solution))
 
     if (verbose): print('model:',model)
 
@@ -403,21 +457,20 @@ def process_dataset(
     plot_predicts(
         model, X, Y, radvec,
         fix_limits=False, lim_padding=lim_padding, dotsize=dotsize, title=plot_title, figsize=figsize,
-        color_bar=color_bar, model_type=model_type, verbose=verbose, save_image=save_image
+        dot_show_radvec=dot_show_radvec, draw_line=draw_line, color_bar=color_bar, model_type=model_type, verbose=verbose, save_image=save_image
     )
-
+   
+'''
+    A class which records the calculation of rademacher complexity
     
-
-class RDhistory():
-    '''
-    a class which records the calculation of rademacher complexity
     model_type: type of model being tested
     rademacher: list of rademacher vectors
     hypothesis: list of calculated hypothesis vectors
-    complexity: history of complexity. list of pairs [sample_count, correlation]
+    complexity: history of complexity. list of pairs [sample_count, correlation]. Currenly not written during calculations, but it can be reconstructed with "rademacher" and "hypothesis" lists.
     correlation: history of correlations. list of lists of calculated correlations
     model: list of models, relating to the hypotheses
-    '''
+'''
+class RDhistory():    
     def __init__(self, model_type):
         self.model_type = model_type
         self.rademacher = list()
@@ -426,42 +479,36 @@ class RDhistory():
         self.correlation = list()
         self.model = list()
 
+'''
+    This function takes an instance of RDhistory class and generates additional samples for it
+
+    X, Y - dataset and its labels
+    history - the RDhistory object to extend
+    radvec - Rademacher vector. If not supplied, a fresh one is generated. Use this parameter if you want to extend multiple RDhistory objects with the same Rademacher vector.
+    
+    margin, bound - margin size and bound on intercept
+    
+    method - optimization method
+    kwargs - arguments for the optimization method
+
+    runs_per_sample - number of times the function will run the optimizer. The list of achieved correlations will be written to the RDhistory. Only the best model and hypothesis will be written to the RDhistory.
+    
+    verbose - toggle verbose output
+'''
 def pump_rademacher(
     X, Y, 
     history,
     radvec=None,
+    margin=0,
+    bound=0,
     method="de",
     kwargs=None,
     runs_per_sample=1,
-    margin=0,
-    bounds=0,
-    verbose=True):
-    
-    # This function takes an instance of RDhistory class and generates additional samples for it
-    #
-    # samples: number of random vectors to be generated
-    # runs_per_sample: number of runs to execute the solver for a single random vector. The best-corelating hypothesis will be appended
-    #   to history.hypothesis, and a list of corelations for all the runs will be appended to history.correlation
-    # tol: tolerance for the solver
-    # flip: an option to flip the randomly generated vector on every other attempt at solving for it.
-    # margin, bound: options for the plane
-    # popsize: size of population for the stochastic solver
-    # verbose: enable verbose output
-
-    '''
-    if (len(history.rademacher) > len(history.hypothesis)):
-        print('size mismatch, fixing...\n', 'rd:', len(history.rademacher), 'hp:', len(history.hypothesis))
-        history.rademacher = history.rademacher[:len(history.rademacher)]
-    elif (len(history.hypothesis) > len(history.rademacher)):
-        print('size mismatch, fixing...\n', 'rd:', len(history.rademacher), 'hp:', len(history.hypothesis))
-        history.hypothesis = history.hypothesis[:len(history.rademacher)]
-    '''
-
+    verbose=False):
     
     data_size = X.shape[0]
         
-    if radvec is None:
-        radvec = [rd.randint(0, 1) * 2 - 1 for x in range(data_size)]
+    if radvec is None: radvec = [rd.randint(0, 1) * 2 - 1 for x in range(data_size)]
 
     sample_hypothesis = []
     correlations = []
@@ -492,7 +539,7 @@ def pump_rademacher(
                 Y=Y,
                 radvec=radvec,
                 margin=margin,
-                bounds=bounds,
+                bound=bound,
                 method=method,
                 kwargs=kwargs,
                 verbose=verbose
@@ -508,7 +555,7 @@ def pump_rademacher(
                 model = [0] + [0 for x in range(X.shape[1])]
             else:
                 check = np.sign(np.sum(radvec))
-                model = np.array([bounds * check] + list(solution))
+                model = np.array([bound * check] + list(solution))
 
             pred = _confidence(model[1:], model[0], X)
             models.append(model)
@@ -518,8 +565,6 @@ def pump_rademacher(
         correlations.append(np.sum(radvec * pred))
 
     best_run_index = correlations.index(max(correlations))
-    if (verbose):
-        print('best:', correlations[best_run_index], 'all:', correlations)
     
     best_pred = sample_hypothesis[best_run_index]
     
@@ -527,13 +572,18 @@ def pump_rademacher(
     history.hypothesis.append(best_pred)
     history.correlation.append(correlations)
     history.model.append(models[best_run_index])
-    # print('b: ', bounds, '\tm: ', margin, '\tc: ', correlations[best_run_index])
+    
+    if (verbose):
+        print('b: ', bound, '\tm: ', margin, '\tc: ', correlations[best_run_index])
+        print('best:', correlations[best_run_index], 'all:', correlations)
 
+'''
+    Calculate rademacher complexity given an instance of RDhistory class
+    
+    history - the RDhistory object
+    dist - also return the distribution of correlations (use this for plotting)
+'''
 def calc_complexity(history, dist=False):
-
-    # Calculate rademacher complexity given an instance of RDhistory class
-    # return the complexity, and optionally also return the distribution of corelations with the random vectors.
-
     samples = len(history.hypothesis)
     data_size = len(history.hypothesis[0])
     
@@ -554,10 +604,12 @@ def calc_complexity(history, dist=False):
     else:
         return hypothesis_complexity
            
+'''
+    Plot a histogram of corelations given an instance of RDhistory class
+    
+    range_in, bins - parameters for the histogram
+'''
 def plot_correlations(history, range_in=[0,1], bins=100):
-
-    # Plot a histogram of corelations given an instance of RDhistory class
-
     samples = len(history.hypothesis)
     data_size = len(history.hypothesis[0])
 
@@ -575,17 +627,17 @@ def plot_correlations(history, range_in=[0,1], bins=100):
     plt.legend(loc='upper right')
     plt.show()
     
-def best_worst(data, history, figsize=[7,7], color_bar=False):
-    
-    '''
+'''
+UNUSED
+
     Display the best and worst correlation from a given RDhistory class
 
     data: data that the samples were based on
     history: rademacher calculation history
 
     figsize: size of plot
-    '''
 
+def best_worst(data, history, figsize=[7,7], color_bar=False):
     print("Best and worst correlations")
 
     samples = len(history.hypothesis)
@@ -613,11 +665,16 @@ def best_worst(data, history, figsize=[7,7], color_bar=False):
     print('worst correlation',  correlations[min_correlation[0]], 'occured in sample #', min_correlation[0])
     plot_predicts(history.model[int(min_correlation)], data, rd_min, model_type=history.model_type, fix_limits=False, lim_padding=0.2, dotsize=150, figsize=[10,10], color_bar=color_bar)
 
-def save_file(name,history):
+'''
+
+'''
+    helper functions for saving / loading files with pickle
+'''
+def save_file(name,file):
     with open(name, "wb") as fp:
-        pickle.dump(history, fp)
+        pickle.dump(file, fp)
 
 def load_file(name):
     with open(name, "rb") as fp:
-        hist = pickle.load(fp)
-    return hist
+        file = pickle.load(fp)
+    return file
